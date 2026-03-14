@@ -26,14 +26,45 @@ class LogAggregator:
         self.start_time = datetime.datetime.now()
         self.lock = threading.Lock()
         self.running = True
+        self.ansi_conv = Ansi2HTMLConverter(inline=True, scheme="xterm")
+        self._file_ref_re = re.compile(
+            r'(?:^|[\s\'"\(])([a-zA-Z0-9_./\\-]+\.[a-zA-Z]{1,5})'
+            r'[:\(](\d+)[\),:]?'
+        )
+        self._traceback_active = False
 
     def add_log_line(self, line):
         with self.lock:
-            self.log_lines.append({
+            content = line.rstrip("\n")
+            line_type = self._classify_line(line)
+            html_content = self.ansi_conv.convert(content, full=False)
+            file_refs = self._extract_file_refs(content)
+            is_json, json_pretty = self._try_parse_json(content)
+
+            # Repetition squashing
+            if self.log_lines and self.log_lines[-1]["content"] == content:
+                self.log_lines[-1]["repeat_count"] += 1
+                return
+
+            # Stack trace grouping
+            is_trace_line = self._is_traceback_line(content)
+            if is_trace_line and self.log_lines and self.log_lines[-1].get("traceback_lines") is not None:
+                self.log_lines[-1]["traceback_lines"].append(html_content)
+                self.log_lines[-1]["content_raw"] = content
+                return
+
+            entry = {
                 "time": datetime.datetime.now(),
-                "content": line.rstrip("\n"),
-                "type": self._classify_line(line),
-            })
+                "content": content,
+                "html_content": html_content,
+                "type": line_type,
+                "file_refs": file_refs,
+                "is_json": is_json,
+                "json_pretty": json_pretty,
+                "repeat_count": 1,
+                "traceback_lines": [] if self._is_traceback_start(content) else None,
+            }
+            self.log_lines.append(entry)
 
     def get_logs_json(self):
         with self.lock:
@@ -41,7 +72,13 @@ class LogAggregator:
                 {
                     "timestamp": log["time"].strftime("%H:%M:%S.%f")[:-3],
                     "content": log["content"],
+                    "html_content": log["html_content"],
                     "type": log["type"],
+                    "file_refs": log["file_refs"],
+                    "is_json": log["is_json"],
+                    "json_pretty": log.get("json_pretty"),
+                    "repeat_count": log["repeat_count"],
+                    "traceback_lines": log.get("traceback_lines"),
                 }
                 for log in self.log_lines
             ]
@@ -62,6 +99,35 @@ class LogAggregator:
         if any(k in l for k in ("warn", "warning", "deprecated")):
             return "warning"
         return "info"
+
+    def _is_traceback_start(self, line):
+        l = line.strip()
+        return l == "Traceback (most recent call last):" or l.startswith("ERROR ") and "Traceback" in l
+
+    def _is_traceback_line(self, line):
+        s = line.strip()
+        return (
+            s.startswith("File ") or
+            s.startswith("at ") or
+            s.startswith("in ") or
+            (len(s) > 0 and s[0] == '^') or
+            s.startswith("raise ") or
+            s.startswith("| ") or
+            bool(re.match(r'^\d+[:|\s]', s))
+        )
+
+    def _extract_file_refs(self, line):
+        return [{"file": m.group(1), "line": int(m.group(2))} for m in self._file_ref_re.finditer(line)]
+
+    def _try_parse_json(self, line):
+        stripped = line.strip()
+        if stripped.startswith('{') or stripped.startswith('['):
+            try:
+                parsed = json.loads(stripped)
+                return True, json.dumps(parsed, indent=2)
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return False, None
 
     def capture_input(self):
         print(f"🌐 http://localhost:{self.port}")
