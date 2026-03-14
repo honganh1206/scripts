@@ -75,8 +75,21 @@ class LogAggregator:
 
     def get_logs_since(self, after_id):
         with self.lock:
-            logs = self.get_logs_json()[after_id:]
-            return logs, len(self.log_lines)
+            result = [
+                {
+                    "timestamp": log["time"].strftime("%H:%M:%S.%f")[:-3],
+                    "content": log["content"],
+                    "html_content": log["html_content"],
+                    "type": log["type"],
+                    "file_refs": log["file_refs"],
+                    "is_json": log["is_json"],
+                    "json_pretty": log.get("json_pretty"),
+                    "repeat_count": log["repeat_count"],
+                    "traceback_lines": log.get("traceback_lines"),
+                }
+                for log in self.log_lines[after_id:]
+            ]
+            return result, len(self.log_lines)
 
     def get_logs_json(self):
         with self.lock:
@@ -837,9 +850,17 @@ def run_server(aggregator, port):
 
 
 def main():
+    import atexit
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", "-p", type=int, default=8765)
     args = parser.parse_args()
+
+    html_path = os.path.join(
+        tempfile.gettempdir(),
+        f"log_aggregator_{os.getpid()}.html"
+    )
+    atexit.register(lambda: os.unlink(html_path) if os.path.exists(html_path) else None)
 
     agg = LogAggregator(args.port)
     run_server(agg, args.port)
