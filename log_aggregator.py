@@ -14,7 +14,9 @@ import time
 import os
 import re
 import tempfile
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+import http.server
 
 from ansi2html import Ansi2HTMLConverter
 
@@ -32,6 +34,8 @@ class LogAggregator:
             r'[:\(](\d+)[\),:]?'
         )
         self._traceback_active = False
+        self._sse_event = threading.Event()
+        self._last_id = 0
 
     def add_log_line(self, line):
         with self.lock:
@@ -65,6 +69,14 @@ class LogAggregator:
                 "traceback_lines": [] if self._is_traceback_start(content) else None,
             }
             self.log_lines.append(entry)
+            self._last_id = len(self.log_lines)
+            self._sse_event.set()
+            self._sse_event.clear()
+
+    def get_logs_since(self, after_id):
+        with self.lock:
+            logs = self.get_logs_json()[after_id:]
+            return logs, len(self.log_lines)
 
     def get_logs_json(self):
         with self.lock:
@@ -148,8 +160,31 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             self.serve_html()
         elif self.path == "/api/logs":
             self.serve_json(self.server.aggregator.get_logs_json())
+        elif self.path.startswith("/api/stream"):
+            self.serve_sse()
         else:
             self.send_error(404)
+
+    def serve_sse(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        last_id = 0
+        agg = self.server.aggregator
+        try:
+            while agg.running:
+                logs, current_id = agg.get_logs_since(last_id)
+                if logs:
+                    data = json.dumps(logs)
+                    self.wfile.write(f"id: {current_id}\ndata: {data}\n\n".encode())
+                    self.wfile.flush()
+                    last_id = current_id
+                agg._sse_event.wait(timeout=0.3)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def serve_json(self, payload):
         self.send_response(200)
@@ -311,6 +346,10 @@ poll();
         f.write(html)
 
 
+class ThreadedHTTPServer(ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+
+
 def run_server(aggregator, port):
     html_path = os.path.join(
         tempfile.gettempdir(),
@@ -318,15 +357,11 @@ def run_server(aggregator, port):
     )
     generate_html(html_path)
 
-    server = HTTPServer(("localhost", port), LogRequestHandler)
+    server = ThreadedHTTPServer(("localhost", port), LogRequestHandler)
     server.aggregator = aggregator
     server.html_path = html_path
 
-    def loop():
-        while aggregator.running:
-            server.handle_request()
-
-    threading.Thread(target=loop, daemon=True).start()
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     time.sleep(0.3)
     webbrowser.open(f"http://localhost:{port}")
 
