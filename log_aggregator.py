@@ -162,6 +162,8 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             self.serve_json(self.server.aggregator.get_logs_json())
         elif self.path.startswith("/api/stream"):
             self.serve_sse()
+        elif self.path.startswith("/api/export"):
+            self.serve_export()
         else:
             self.send_error(404)
 
@@ -185,6 +187,32 @@ class LogRequestHandler(BaseHTTPRequestHandler):
                 agg._sse_event.wait(timeout=0.3)
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+    def serve_export(self):
+        from urllib.parse import urlparse, parse_qs
+        params = parse_qs(urlparse(self.path).query)
+        fmt = params.get("format", ["log"])[0]
+        logs = self.server.aggregator.get_logs_json()
+
+        if fmt == "html":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Disposition", "attachment; filename=logs.html")
+            self.end_headers()
+            html = "<html><head><style>body{background:#1a202c;color:#e2e8f0;font-family:monospace;padding:10px;}"
+            html += ".error{background:#742a2a;padding:4px;margin:2px 0;}.warning{background:#744210;padding:4px;margin:2px 0;}"
+            html += ".info{background:#2a4365;padding:4px;margin:2px 0;}</style></head><body>"
+            for log in logs:
+                html += f'<div class="{log["type"]}">[{log["timestamp"]}] {log["html_content"]}</div>'
+            html += "</body></html>"
+            self.wfile.write(html.encode())
+        else:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Disposition", "attachment; filename=logs.txt")
+            self.end_headers()
+            for log in logs:
+                self.wfile.write(f'[{log["timestamp"]}] {log["content"]}\n'.encode())
 
     def serve_json(self, payload):
         self.send_response(200)
