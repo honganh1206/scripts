@@ -18,7 +18,12 @@ from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 import http.server
 
-from ansi2html import Ansi2HTMLConverter
+try:
+    from ansi2html import Ansi2HTMLConverter
+except ImportError:
+    class Ansi2HTMLConverter:
+        def __init__(self, **_): pass
+        def convert(self, text, **_): return text
 
 
 class LogAggregator:
@@ -510,12 +515,15 @@ body {
 </div>
 
 <script>
+const MAX_DOM_LINES = 8000;
+const SEARCH_DEBOUNCE_MS = 250;
 let currentFilter = 'all';
 let allLogs = [];
 let bookmarks = new Set();
 let selectedIdx = -1;
 let currentSearchTerm = '';
 let startTime = Date.now();
+let _searchTimer = null;
 
 function escapeRegex(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -651,6 +659,13 @@ function appendNewLogs(logs) {
         c.appendChild(div);
     });
 
+    // Prune oldest DOM nodes to keep rendering fast
+    const domLines = c.querySelectorAll('.log-line');
+    if (domLines.length > MAX_DOM_LINES) {
+        const toRemove = domLines.length - MAX_DOM_LINES;
+        for (let i = 0; i < toRemove; i++) domLines[i].remove();
+    }
+
     updateStats();
 
     if (document.getElementById('autoScroll').checked) {
@@ -667,10 +682,16 @@ function refilter() {
 }
 
 function searchLogs() {
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(_doSearch, SEARCH_DEBOUNCE_MS);
+}
+
+function _doSearch() {
     currentSearchTerm = document.getElementById('searchInput').value.trim();
     refilter();
-    // Re-render content to update highlighting
-    document.querySelectorAll('.log-line').forEach(el => {
+    // Only re-highlight visible lines to avoid DOM thrashing
+    const visible = document.querySelectorAll('.log-line:not(.filter-hidden)');
+    visible.forEach(el => {
         const idx = parseInt(el.dataset.idx);
         const log = allLogs[idx];
         if (!log) return;
