@@ -1,0 +1,43 @@
+services:
+  data-init:
+    image: alpine:3.22
+    user: root
+    command: ["sh", "-c", "mkdir -p /data/jobs && chown 1000:1000 /data/jobs"]
+    volumes:
+      - ./data:/data
+
+  n8n:
+    build:
+      context: .
+      args:
+        N8N_VERSION: ${N8N_VERSION:-2.39.7}
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Asia/Ho_Chi_Minh}
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_SECURE_COOKIE: "false"
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
+      N8N_PAYLOAD_SIZE_MAX: ${N8N_PAYLOAD_SIZE_MAX:-512}
+      N8N_FORMDATA_FILE_SIZE_MAX: ${N8N_FORMDATA_FILE_SIZE_MAX:-512}
+      N8N_RESTRICT_FILE_ACCESS_TO: /data
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: none
+      EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS: "false"
+      NODES_EXCLUDE: "[]"
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_TRANSCRIPTION_MODEL: ${OPENAI_TRANSCRIPTION_MODEL:-whisper-1}
+      TZ: ${GENERIC_TIMEZONE:-Asia/Ho_Chi_Minh}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./data:/data
+    init: true
+    restart: unless-stopped
+
+volumes:
+  n8n_data:

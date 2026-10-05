@@ -1,0 +1,405 @@
+{
+  "id": "localAudio123456",
+  "name": "Local audio upload to Google Drive and Docs",
+  "nodes": [
+    {
+      "parameters": {
+        "authentication": "n8nUserAuth",
+        "requireExecuteAccess": true,
+        "formTitle": "Transcribe a local audio file",
+        "formDescription": "Upload one audio file. Files around 30 minutes are supported and will be normalized before transcription.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Audio file",
+              "fieldName": "audio",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".mp3, .mp4, .mpeg, .mpga, .m4a, .wav, .webm, .ogg, .oga, .flac, .aac",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Google Drive parent folder ID",
+              "fieldName": "driveParentFolderId",
+              "fieldType": "text",
+              "defaultValue": "root",
+              "placeholder": "root",
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "path": "transcribe-local-audio",
+          "buttonLabel": "Upload and transcribe",
+          "appendAttribution": false,
+          "respondWithOptions": {
+            "values": {
+              "respondWith": "text",
+              "formSubmittedText": "Transcription finished. Open the completed n8n execution to access the Google Drive and Google Docs links."
+            }
+          }
+        }
+      },
+      "id": "769071d2-416a-4f35-924c-40ee2b117388",
+      "name": "Upload audio",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -1100,
+        0
+      ],
+      "webhookId": "e78b4c08-28b9-41de-b38f-e3ed6817f77a"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item;\nconst audio = item.binary?.audio;\nif (!audio || Object.keys(item.binary).length !== 1) {\n  throw new Error('Upload exactly one audio file.');\n}\nconst originalName = String(audio.fileName || item.json.audio?.filename || 'audio');\nconst extension = String(audio.fileExtension || originalName.match(/\\.([^.]+)$/)?.[1] || '').toLowerCase();\nconst allowedExtensions = new Set(['mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm', 'ogg', 'oga', 'flac', 'aac']);\nif (!allowedExtensions.has(extension)) {\n  throw new Error('Unsupported audio format. Use MP3, MP4, MPEG, MPGA, M4A, WAV, WebM, OGG, FLAC, or AAC.');\n}\nconst size = Number(item.json.audio?.size || 0);\nif (size > 500 * 1024 * 1024) {\n  throw new Error('The audio file exceeds the 500 MiB workflow limit.');\n}\nconst folderId = String(item.json.driveParentFolderId || '');\nif (!/^(?:root|[A-Za-z0-9_-]{2,})$/.test(folderId)) {\n  throw new Error('Enter root or a valid Google Drive parent folder ID.');\n}\nconst title = originalName.replace(/\\.[^.]+$/, '').replace(/[\\/\\u0000-\\u001f\\u007f]/g, ' - ').replace(/\\s+/g, ' ').trim().slice(0, 180) || 'Audio';\nconst safeFileName = originalName.replace(/[\\/\\u0000-\\u001f\\u007f]/g, ' - ').replace(/\\s+/g, ' ').trim().slice(0, 220) || `audio.${extension}`;\nconst jobId = `upload-${$execution.id}`;\nreturn [{\n  json: {\n    jobId,\n    stagedPath: `/data/jobs/${jobId}.source`,\n    originalName: safeFileName,\n    title,\n    folderName: title,\n    driveParentFolderId: folderId\n  },\n  binary: item.binary\n}];"
+      },
+      "id": "8cc5b7bf-cbc3-447c-a994-0db574f45157",
+      "name": "Validate upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.stagedPath }}",
+        "dataPropertyName": "audio",
+        "options": {}
+      },
+      "id": "8b69b08d-36bd-4297-9204-15d53005e078",
+      "name": "Write uploaded audio",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        -660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=/opt/scripts/prepare-audio-upload.sh \"{{ $json.jobId }}\" \"{{ $json.stagedPath }}\""
+      },
+      "id": "f19878b0-78dd-4039-89e5-459ad629165c",
+      "name": "Prepare upload job",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared = JSON.parse($json.stdout);\nconst upload = $('Validate upload').item.json;\nreturn [{ json: { ...upload, ...prepared } }];"
+      },
+      "id": "82d16eb8-520f-4429-90eb-f547c76c7f7f",
+      "name": "Parse upload result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $json.folderName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.driveParentFolderId }}"
+        },
+        "options": {}
+      },
+      "id": "6ee16e55-ac99-472f-9747-88feb44926d7",
+      "name": "Create Drive folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $('Parse upload result').item.json.sourcePath }}",
+        "options": {
+          "dataPropertyName": "data",
+          "fileName": "={{ $('Parse upload result').item.json.originalName }}"
+        }
+      },
+      "id": "ba8dfa36-3ebf-46dc-9485-389e39b9d42c",
+      "name": "Read audio file",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "name": "={{ $('Parse upload result').item.json.originalName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Create Drive folder').item.json.id }}"
+        },
+        "options": {}
+      },
+      "id": "40823a53-d4ee-4438-809e-e655153e07d2",
+      "name": "Upload audio to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=/opt/scripts/transcribe-video.sh \"{{ $('Parse upload result').item.json.jobId }}\" \"{{ $('Parse upload result').item.json.jobDir }}\" \"{{ $('Parse upload result').item.json.sourcePath }}\""
+      },
+      "id": "ddcae3bd-eb58-42fc-acd8-c593d6eb7812",
+      "name": "Transcribe audio",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: JSON.parse($json.stdout) }];"
+      },
+      "id": "b9346e76-9964-4a0a-8e2f-e95010877ad0",
+      "name": "Parse transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "createFromText",
+        "content": "={{ ['Title: ' + $('Parse upload result').item.json.title, 'Source file: ' + $('Parse upload result').item.json.originalName, 'Transcription: ' + $json.provider + ' / ' + $json.model, '', 'Transcript', '', $json.text].join(String.fromCharCode(10)) }}",
+        "name": "={{ $('Parse upload result').item.json.title }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Create Drive folder').item.json.id }}"
+        },
+        "options": {
+          "convertToGoogleDocument": true
+        }
+      },
+      "id": "fcb58c95-476e-46f1-8086-df3d92787791",
+      "name": "Create transcript Google Doc",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=/opt/scripts/cleanup-job.sh \"{{ $('Parse upload result').item.json.jobDir }}\""
+      },
+      "id": "7a18df20-510d-4884-ab35-b1f3ae50d67b",
+      "name": "Delete temporary files",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const upload = $('Parse upload result').item.json;\nconst folder = $('Create Drive folder').item.json;\nconst audio = $('Upload audio to Drive').item.json;\nconst transcript = $('Create transcript Google Doc').item.json;\nreturn [{ json: { title: upload.title, folderId: folder.id, folderUrl: `https://drive.google.com/drive/folders/${folder.id}`, audioFileId: audio.id, audioUrl: `https://drive.google.com/file/d/${audio.id}/view`, transcriptDocumentId: transcript.id, transcriptUrl: `https://docs.google.com/document/d/${transcript.id}/edit`, localFilesDeleted: true } }];"
+      },
+      "id": "58b9b169-1106-414c-b16d-100318660b2f",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Upload audio": {
+      "main": [
+        [
+          {
+            "node": "Validate upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate upload": {
+      "main": [
+        [
+          {
+            "node": "Write uploaded audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write uploaded audio": {
+      "main": [
+        [
+          {
+            "node": "Prepare upload job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare upload job": {
+      "main": [
+        [
+          {
+            "node": "Parse upload result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse upload result": {
+      "main": [
+        [
+          {
+            "node": "Create Drive folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Drive folder": {
+      "main": [
+        [
+          {
+            "node": "Read audio file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read audio file": {
+      "main": [
+        [
+          {
+            "node": "Upload audio to Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload audio to Drive": {
+      "main": [
+        [
+          {
+            "node": "Transcribe audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe audio": {
+      "main": [
+        [
+          {
+            "node": "Parse transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse transcript": {
+      "main": [
+        [
+          {
+            "node": "Create transcript Google Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create transcript Google Doc": {
+      "main": [
+        [
+          {
+            "node": "Delete temporary files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete temporary files": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "46063a35-b093-4513-9aaf-671334da2ba0",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

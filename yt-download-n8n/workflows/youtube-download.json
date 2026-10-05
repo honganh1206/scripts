@@ -1,0 +1,246 @@
+{
+  "id": "9ddf92f8-3267-45ba-a790-ece1ed8cdb94",
+  "name": "YouTube to Google Drive and Docs",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1f8ea5ac-ef04-4a97-b6d7-a8ddf576fbeb",
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-1140, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "53478425-bef7-4ba5-98d9-a882f307bbf1",
+              "name": "youtubeUrl",
+              "value": "https://www.youtube.com/watch?v=REPLACE_ME_",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "85a645eb-4553-47bd-bf79-3a40f6e14335",
+      "name": "Set inputs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-920, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const url = $json.youtubeUrl;\nconst allowed = /^https:\\/\\/(?:www\\.)?(?:youtube\\.com\\/watch\\?v=|youtu\\.be\\/)[A-Za-z0-9_-]{11}$/;\nif (typeof url !== 'string' || !allowed.test(url)) {\n  throw new Error('Enter a basic YouTube watch or youtu.be URL containing one 11-character video ID.');\n}\nreturn [{ json: { youtubeUrl: url } }];"
+      },
+      "id": "c6d7ad5d-f420-4be7-b774-1093687f1a45",
+      "name": "Validate inputs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-700, 0]
+    },
+    {
+      "parameters": {
+        "command": "=/opt/scripts/process-video.sh \"{{ $json.youtubeUrl }}\""
+      },
+      "id": "bb9084b0-1a93-4b7f-9db2-cff07eb86ef8",
+      "name": "Download video",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [-480, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: JSON.parse($json.stdout) }];"
+      },
+      "id": "692798a7-24db-42c1-9304-b0672bb5ca19",
+      "name": "Parse download result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-260, 0]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "folder",
+        "operation": "create",
+        "name": "={{ $('Parse download result').item.json.folderName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "https://drive.google.com/drive/u/0/folders/19nePboHKnCJoJdHVoKUADoCpJyO0uRN1"
+        },
+        "options": {}
+      },
+      "id": "9db8d2e0-c41a-41a4-afd3-4a65be189a6c",
+      "name": "Create Drive folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [-40, 0]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $('Parse download result').item.json.videoPath }}",
+        "options": {
+          "dataPropertyName": "data",
+          "fileName": "={{ $('Parse download result').item.json.videoFileName }}"
+        }
+      },
+      "id": "9303a052-f01a-432b-b342-385e6a492e35",
+      "name": "Read video file",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [180, 0]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "file",
+        "operation": "upload",
+        "inputDataFieldName": "data",
+        "name": "={{ $('Parse download result').item.json.videoFileName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Create Drive folder').item.json.id }}"
+        },
+        "options": {}
+      },
+      "id": "db3dcf5e-0a8f-4dde-837a-166597a29492",
+      "name": "Upload video",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [400, 0]
+    },
+    {
+      "parameters": {
+        "command": "=/opt/scripts/transcribe-video.sh \"{{ $('Parse download result').item.json.jobId }}\" \"{{ $('Parse download result').item.json.jobDir }}\" \"{{ $('Parse download result').item.json.videoPath }}\""
+      },
+      "id": "16084b69-f6c8-45a1-b68f-c48ea7dcffbc",
+      "name": "Transcribe audio",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [620, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: JSON.parse($json.stdout) }];"
+      },
+      "id": "3fb566f1-1f0b-490d-9bea-f5c3289dc0b1",
+      "name": "Parse transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [840, 0]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "file",
+        "operation": "createFromText",
+        "content": "={{ ['Title: ' + $('Parse download result').item.json.title, 'Source: ' + $('Parse download result').item.json.sourceUrl, 'Channel: ' + $('Parse download result').item.json.channel, 'Upload date: ' + $('Parse download result').item.json.uploadDate, 'Transcription: ' + $json.provider + ' / ' + $json.model, '', 'Transcript', '', $json.text].join(String.fromCharCode(10)) }}",
+        "name": "={{ $('Parse download result').item.json.folderName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Create Drive folder').item.json.id }}"
+        },
+        "options": {
+          "convertToGoogleDocument": true
+        }
+      },
+      "id": "7ce9fe8f-f3af-4fac-a889-f857ea7224b9",
+      "name": "Create transcript Google Doc",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1060, 0]
+    },
+    {
+      "parameters": {
+        "command": "=/opt/scripts/cleanup-job.sh \"{{ $('Parse download result').item.json.jobDir }}\""
+      },
+      "id": "9ab5c817-54a6-4cf1-9965-0db04094a77c",
+      "name": "Delete temporary files",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1280, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const media = $('Parse download result').item.json;\nconst folder = $('Create Drive folder').item.json;\nconst video = $('Upload video').item.json;\nconst transcript = $('Create transcript Google Doc').item.json;\nreturn [{ json: { title: media.title, folderId: folder.id, folderUrl: `https://drive.google.com/drive/folders/${folder.id}`, videoId: video.id, videoUrl: `https://drive.google.com/file/d/${video.id}/view`, transcriptDocumentId: transcript.id, transcriptUrl: `https://docs.google.com/document/d/${transcript.id}/edit`, localFilesDeleted: true } }];"
+      },
+      "id": "67684c70-2601-4e58-a987-d4fcdbf89c95",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 0]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Run manually": {
+      "main": [[{"node": "Set inputs", "type": "main", "index": 0}]]
+    },
+    "Set inputs": {
+      "main": [[{"node": "Validate inputs", "type": "main", "index": 0}]]
+    },
+    "Validate inputs": {
+      "main": [[{"node": "Download video", "type": "main", "index": 0}]]
+    },
+    "Download video": {
+      "main": [[{"node": "Parse download result", "type": "main", "index": 0}]]
+    },
+    "Parse download result": {
+      "main": [[{"node": "Create Drive folder", "type": "main", "index": 0}]]
+    },
+    "Create Drive folder": {
+      "main": [[{"node": "Read video file", "type": "main", "index": 0}]]
+    },
+    "Read video file": {
+      "main": [[{"node": "Upload video", "type": "main", "index": 0}]]
+    },
+    "Upload video": {
+      "main": [[{"node": "Transcribe audio", "type": "main", "index": 0}]]
+    },
+    "Transcribe audio": {
+      "main": [[{"node": "Parse transcript", "type": "main", "index": 0}]]
+    },
+    "Parse transcript": {
+      "main": [[{"node": "Create transcript Google Doc", "type": "main", "index": 0}]]
+    },
+    "Create transcript Google Doc": {
+      "main": [[{"node": "Delete temporary files", "type": "main", "index": 0}]]
+    },
+    "Delete temporary files": {
+      "main": [[{"node": "Result", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "d6d50dc0-6f19-4b06-9168-37672badfe5d",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
